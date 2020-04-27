@@ -9,6 +9,10 @@
 #include "json.hpp"
 #include "spline.h"
 
+#define mps_to_mph 2.23
+#define speed_limit 49
+#define acc_limit 9.5
+#define dt 0.02
 // for convenience
 using nlohmann::json;
 using std::string;
@@ -88,7 +92,6 @@ int main() {
           // Sensor Fusion Data, a list of all other cars on the same side 
           //   of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
-
           json msgJson;
 
           vector<double> next_x_vals;
@@ -106,6 +109,8 @@ int main() {
 
           double pos_x_prev;
           double pos_y_prev;
+          double speed_prev_mps;
+
           if (path_size == 0) {
             pos_x = car_x;
             pos_y = car_y;
@@ -113,6 +118,7 @@ int main() {
             
             pos_x_prev = pos_x - cos(angle);
             pos_y_prev = pos_y - sin(angle);
+            speed_prev_mps = car_speed / mps_to_mph;
             // std::cout<<"path size=0"<<std::endl;
           } else {
             pos_x = previous_path_x[path_size-1];
@@ -121,14 +127,68 @@ int main() {
             pos_x_prev = previous_path_x[path_size-2];
             pos_y_prev = previous_path_y[path_size-2];
             angle = atan2(pos_y-pos_y_prev, pos_x-pos_x_prev);
+            speed_prev_mps = distance(pos_x, pos_y, pos_x_prev, pos_y_prev) / dt;
             // std::cout<<"path size>0"<<std::endl;
           }
 
-          double dist_inc = 0.3;
+          // get car position and lane
           vector<double> s_d = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_15 = getXY(s_d[0]+15, 6., map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_30 = getXY(s_d[0]+30, 6., map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_45 = getXY(s_d[0]+45, 6., map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          double lane_d = s_d[1];
+          if ((lane_d > 0) & (lane_d <= 4.)){
+            lane_d = 2.;
+          }else if ((lane_d > 4) & (lane_d <= 8.)){
+            lane_d = 6.;
+          }
+          else if ((lane_d > 8) & (lane_d <= 12.)){
+            lane_d = 10.;
+          }
+
+          // calculate distance increments for path
+          double dist_inc = speed_limit * dt / mps_to_mph;
+          vector <double> dist_inc_list;
+          for (int i = 0; i < 50-path_size; ++i) {
+            // ADJUST DIST INC FOR SMOOTH ACCEL
+            double acc_proj = (speed_limit/mps_to_mph - speed_prev_mps)/dt;
+            if (acc_proj > acc_limit){
+              // s = ut + 1/2at^2
+              dist_inc = speed_prev_mps * dt + 0.5 * acc_limit * pow(dt, 2);
+              std::cout<<"car speed adjusted for acc"<<speed_prev_mps<<std::endl;
+            }
+
+            // ADJUST DIST INC TO AVOID COLLISIONS IN SAME LANE
+            double max_dist_in_lane = dist_inc;
+            double ego_i_s = s_d[0];
+            for (int j=0; j<sensor_fusion.size(); j++){
+              double car_j_s = sensor_fusion[j][5];
+              double car_j_d = sensor_fusion[j][6];
+              double vx_j = sensor_fusion[j][3];
+              double vy_j = sensor_fusion[j][4];
+              double car_j_v = pow(pow(vx_j, 2) + pow(vy_j, 2), 0.5);
+              if ((car_j_d > lane_d - 2.) & ((car_j_d < lane_d + 2.))){
+                if (((ego_i_s + dist_inc) > (car_j_s + car_j_v * dt * path_size - 50.)) & 
+                      ((ego_i_s + dist_inc) < (car_j_s + car_j_v * dt * path_size))){
+                  if ((dist_inc/dt) > car_j_v){
+                    dist_inc = std::max(speed_prev_mps * dt - 0.5 * acc_limit * pow(dt, 2), car_j_v * dt);
+                    std::cout<<"car j d"<<car_j_d<<std::endl;
+                    std::cout<<"lane d"<<lane_d<<std::endl;
+                    std::cout<<"car j s"<<car_j_s<<std::endl;
+                    std::cout<<"ego s"<<ego_i_s<<std::endl;
+                    std::cout<<"car j v"<<car_j_v<<std::endl;
+                  }
+                }
+              }
+            }
+
+            speed_prev_mps = dist_inc / dt;
+            ego_i_s += dist_inc;
+            dist_inc_list.push_back(dist_inc);
+            // std::cout<<"dist inc "<<dist_inc<<std::endl;
+          }
+
+          
+          vector<double> xy_15 = getXY(s_d[0]+15, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector<double> xy_30 = getXY(s_d[0]+30, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector<double> xy_45 = getXY(s_d[0]+45, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> xpts;
           vector<double> ypts;
           xpts.push_back(pos_x_prev);
@@ -157,9 +217,10 @@ int main() {
           s.set_points(xpts, ypts);
           double dist = distance(xpts[1], ypts[1], xpts[npts-1], ypts[npts-1]);
           
+          // std::cout<<"car speed="<<speed_prev_mps<<std::endl;
+
           for (int i = 0; i < 50-path_size; ++i) {
-            // double x_new = pos_x + (i+1)*dist_inc/15.*(xy_15[0] - pos_x);
-            double dx_i = (i+1)*(dist_inc/dist) * (xpts[npts-1] - xpts[1]);
+            double dx_i = (i+1)*(dist_inc_list[i]/dist) * (xpts[npts-1] - xpts[1]);
             double x_i = xpts[1]+dx_i;
             double y_i = s(x_i);
 
@@ -167,17 +228,8 @@ int main() {
             double y_i_glob = pos_y + x_i*sin(angle) + y_i*cos(angle);
             next_x_vals.push_back(x_i_glob);
             next_y_vals.push_back(y_i_glob);
-            // std::cout<<"i = "<<i<<std::endl;
-            // std::cout<<"next x "<<pos_x + x_i<<std::endl;
-            // std::cout<<"next y "<<pos_y + y_i<<std::endl;
           }
-
-          /**
-           * TODO: define a path made up of (x,y) points that the car will visit
-           *   sequentially every .02 seconds
-           */
-
-
+          dist_inc_list.clear();
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
