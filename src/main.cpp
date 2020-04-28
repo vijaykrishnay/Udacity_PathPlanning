@@ -250,21 +250,21 @@ int main() {
           dist_inc_list = dist_inc_lists[lane];
           lane_d = 4. * lane + 2.;
 
+          vector<double> xy_15 = getXY(s_d[0]+15, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> xy_30 = getXY(s_d[0]+30, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_60 = getXY(s_d[0]+60, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_90 = getXY(s_d[0]+90, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          vector<double> xy_45 = getXY(s_d[0]+45, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> xpts;
           vector<double> ypts;
           xpts.push_back(pos_x_prev);
           xpts.push_back(pos_x);
+          xpts.push_back(xy_15[0]);
           xpts.push_back(xy_30[0]);
-          xpts.push_back(xy_60[0]);
-          xpts.push_back(xy_90[0]);
+          xpts.push_back(xy_45[0]);
           ypts.push_back(pos_y_prev);
           ypts.push_back(pos_y);
+          ypts.push_back(xy_15[1]);
           ypts.push_back(xy_30[1]);
-          ypts.push_back(xy_60[1]);
-          ypts.push_back(xy_90[1]);
+          ypts.push_back(xy_45[1]);
           
           int npts = xpts.size();
           // Convert to local coordinate system. This prevents multiple y values for the same x?(for short distances)
