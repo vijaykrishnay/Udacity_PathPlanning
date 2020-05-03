@@ -10,11 +10,12 @@
 #include "spline.h"
 #include <numeric>
 
-#define mps_to_mph 2.23
-#define speed_limit 49
-#define acc_limit 9.5
+#define MPS_TO_MPH 2.23
+#define SPEED_LIMIT 49.
+#define ACC_LIMIT 9.0 // 10% buffer to account for added distance during lane changes and curved roads.
+#define NUM_POINTS 50
 #define dt 0.02
-#define dist_inc_max speed_limit * dt / mps_to_mph
+#define DIST_INC_MAX SPEED_LIMIT * dt / MPS_TO_MPH
 // for convenience
 using nlohmann::json;
 using std::string;
@@ -23,14 +24,14 @@ using std::vector;
 vector<double> get_dist_inc(int lane, double speed_prev_mps, int path_size, vector<double> s_d, vector<vector<double>> sensor_fusion){
   double lane_d = 4.*lane + 2.;
   vector <double> dist_inc_list;
-  for (int i = 0; i < 250; ++i) {
+  for (int i = 0; i < (3 * NUM_POINTS); ++i) {
 
-    double dist_inc = dist_inc_max;
+    double dist_inc = DIST_INC_MAX;
     // ADJUST DIST INC FOR SMOOTH ACCEL
-    double acc_proj = (speed_limit/mps_to_mph - speed_prev_mps)/dt;
-    if (acc_proj > acc_limit){
+    double acc_proj = (SPEED_LIMIT/MPS_TO_MPH - speed_prev_mps)/dt;
+    if (acc_proj > ACC_LIMIT){
       // s = ut + 1/2at^2
-      dist_inc = speed_prev_mps * dt + 0.5 * acc_limit * pow(dt, 2);
+      dist_inc = speed_prev_mps * dt + 0.5 * ACC_LIMIT * pow(dt, 2);
       // std::cout<<"car speed adjusted for acc"<<speed_prev_mps<<std::endl;
     }
 
@@ -44,10 +45,10 @@ vector<double> get_dist_inc(int lane, double speed_prev_mps, int path_size, vect
       double vy_j = sensor_fusion[j][4];
       double car_j_v = pow(pow(vx_j, 2) + pow(vy_j, 2), 0.5);
       if ((car_j_d > lane_d - 2.) & ((car_j_d < lane_d + 2.))){
-        if (((ego_i_s + dist_inc) > (car_j_s + car_j_v * dt * path_size - 30.)) & 
+        if (((ego_i_s + dist_inc) > (car_j_s + car_j_v * dt * path_size - 20.)) & 
               ((ego_i_s + dist_inc) < (car_j_s + car_j_v * dt * path_size))){
           if ((dist_inc/dt) > car_j_v){
-            dist_inc = std::max(speed_prev_mps * dt - 0.5 * acc_limit * pow(dt, 2), car_j_v * dt);
+            dist_inc = std::max(speed_prev_mps * dt - 0.5 * ACC_LIMIT * pow(dt, 2), car_j_v * dt);
             // std::cout<<"car j d"<<car_j_d<<std::endl;
             // std::cout<<"lane d"<<lane_d<<std::endl;
             // std::cout<<"car j s"<<car_j_s<<std::endl;
@@ -66,6 +67,7 @@ vector<double> get_dist_inc(int lane, double speed_prev_mps, int path_size, vect
   return dist_inc_list;
 }
 
+// Check if EGO will be within 10m of other vehicles in the same lane after path_size steps 
 bool cars_in_lane(int path_size, int lane, vector<double> s_d, vector<vector<double>> sensor_fusion){
   double lane_d = 4.*lane + 2.;
   for (int j=0; j<sensor_fusion.size(); j++){
@@ -75,7 +77,7 @@ bool cars_in_lane(int path_size, int lane, vector<double> s_d, vector<vector<dou
     double vy_j = sensor_fusion[j][4];
     double car_j_v = pow(pow(vx_j, 2) + pow(vy_j, 2), 0.5);
     if ((car_j_d > lane_d - 2.) & ((car_j_d < lane_d + 2.))){
-      if (((s_d[0]) < (car_j_s + car_j_v * dt * path_size + 10.)) &
+      if (((s_d[0]) < (car_j_s + car_j_v * dt * path_size + 15.)) &
             ((s_d[0]) > (car_j_s + car_j_v * dt * path_size - 10.))){
         return true;
       }
@@ -168,6 +170,11 @@ int main() {
           double angle;
           int path_size = previous_path_x.size();
 
+          // // Cap path size to add at leas 5 points per update. Fewer points may result in weird lane change behavior
+          // if (path_size > (NUM_POINTS - 5)){
+          //   path_size = NUM_POINTS - 5;
+          // }
+
           for (int i = 0; i < path_size; ++i) {
             next_x_vals.push_back(previous_path_x[i]);
             next_y_vals.push_back(previous_path_y[i]);
@@ -184,7 +191,7 @@ int main() {
             
             pos_x_prev = pos_x - cos(angle);
             pos_y_prev = pos_y - sin(angle);
-            speed_prev_mps = car_speed / mps_to_mph;
+            speed_prev_mps = car_speed / MPS_TO_MPH;
             // std::cout<<"path size=0"<<std::endl;
           } else {
             pos_x = previous_path_x[path_size-1];
@@ -194,19 +201,27 @@ int main() {
             pos_y_prev = previous_path_y[path_size-2];
             angle = atan2(pos_y-pos_y_prev, pos_x-pos_x_prev);
             speed_prev_mps = distance(pos_x, pos_y, pos_x_prev, pos_y_prev) / dt;
-            // std::cout<<"path size>0"<<std::endl;
+            std::cout<<"path size: "<<path_size<<std::endl;
           }
 
           // get car position and lane
+          vector<double> car_s_d = getFrenet(car_x, car_y, angle, map_waypoints_x, map_waypoints_y);
           vector<double> s_d = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
-          double lane_d = s_d[1];
+          double lane_d_car = car_s_d[1];
+          double lane_d_pos = s_d[1];
+          bool is_lane_changing;
           vector<vector<double>> dist_inc_lists;
           vector<double> dist_tot_list;
-          int lane;
+          int lane_car, lane_pos, lane_new;
+
+          // For each lane, get distance x, y list and use lane with max dist covered.
           for (int l=0; l<3; l++){
-            if ((lane_d > l*4.) & (lane_d <= (l+1)*4.)){
-              lane_d = l*4. + 2.;
-              lane = l;
+            if ((lane_d_car > l*4.) & (lane_d_car <= (l+1)*4.)){
+              lane_car = l;
+            }
+
+            if ((lane_d_pos > l*4.) & (lane_d_pos <= (l+1)*4.)){
+              lane_pos = l;
             }
 
             vector<double> dist_inc_list = get_dist_inc(l, speed_prev_mps, path_size, s_d, sensor_fusion);
@@ -222,49 +237,51 @@ int main() {
 
             dist_tot_list.push_back(dist_tot);
             dist_inc_lists.push_back(dist_inc_list);
-            std::cout<<"Lane: "<<l<<std::endl;
-            std::cout<<"Distance total: "<<dist_tot<<std::endl;
+            // std::cout<<"Lane: "<<l<<std::endl;
+            // std::cout<<"Distance total: "<<dist_tot<<std::endl;
           }
 
-          // default to current lane
+          // Decide what lane to use. Default to current lane
           vector<double> dist_inc_list;
-          dist_inc_list = dist_inc_lists[lane];
-          if (lane == 0){
-            if (dist_tot_list[1] >= 1.1 * dist_tot_list[0]){
-              lane = 1;
-            }
-          }else if (lane == 1){
-            if ((dist_tot_list[1] < 0.9 * dist_tot_list[0]) | (dist_tot_list[1] < 0.9 * dist_tot_list[2])){
-              if (dist_tot_list[2] >= dist_tot_list[0]){
-                lane = 2;
+          lane_new = lane_pos;
+          // ONLY CHECK FOR LANE CHANGE IF CAR LANE IS THE SAME AS POS LANE (CAR POS AT END OF PREVIOUS PATH)
+          // IF END OF PREVIOUS PATH IN NEW LANE. USE THE NEW LANE. WE DO  NOT WANT TO CHANGE MULTIPLE LANES WITHIN THE WINDOW SELECTED.
+          if (lane_car == lane_pos){
+            if (lane_new == 0){
+              if (dist_tot_list[1] >= 1.1 * dist_tot_list[0]){
+                lane_new = 1;
               }
-              else{
-                lane = 0;
+            }else if (lane_new == 1){
+              if ((dist_tot_list[1] < 0.9 * dist_tot_list[0]) | (dist_tot_list[1] < 0.9 * dist_tot_list[2])){
+                if (dist_tot_list[2] >= dist_tot_list[0]){
+                  lane_new = 2;
+                }
+                else{
+                  lane_new = 0;
+                }
               }
-            }
-          }else if (lane == 2){
-            if (dist_tot_list[1] >= dist_tot_list[2]){
-              lane = 1;
+            }else if (lane_new == 2){
+              if (dist_tot_list[1] >= 1.1 * dist_tot_list[2]){
+                lane_new = 1;
+              }
             }
           }
-          dist_inc_list = dist_inc_lists[lane];
-          lane_d = 4. * lane + 2.;
-
-          vector<double> xy_15 = getXY(s_d[0]+15, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_30 = getXY(s_d[0]+30, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xy_45 = getXY(s_d[0]+45, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          vector<double> xpts;
-          vector<double> ypts;
+          
+          dist_inc_list = dist_inc_lists[lane_new];
+          double lane_d_new = 4. * lane_new + 2.;
+          vector<double> xpts, ypts;
           xpts.push_back(pos_x_prev);
           xpts.push_back(pos_x);
-          xpts.push_back(xy_15[0]);
-          xpts.push_back(xy_30[0]);
-          xpts.push_back(xy_45[0]);
           ypts.push_back(pos_y_prev);
           ypts.push_back(pos_y);
-          ypts.push_back(xy_15[1]);
-          ypts.push_back(xy_30[1]);
-          ypts.push_back(xy_45[1]);
+          
+          vector<double> d_list {30., 60., 90.};  
+          // vector<double> xy_5 = getXY(s_d[0]+5, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+          for (double d : d_list){
+            vector<double> xy_d = getXY(s_d[0]+d, lane_d_new, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            xpts.push_back(xy_d[0]);
+            ypts.push_back(xy_d[1]);
+          }
           
           int npts = xpts.size();
           // Convert to local coordinate system. This prevents multiple y values for the same x?(for short distances)
@@ -279,12 +296,12 @@ int main() {
 
           tk::spline s;
           s.set_points(xpts, ypts);
-          double dist = distance(xpts[1], ypts[1], xpts[npts-1], ypts[npts-1]);
+          double dist = distance(xpts[1], ypts[1], xpts[2], ypts[2]); // this should be equal to first distance in d_list
           
           // std::cout<<"car speed="<<speed_prev_mps<<std::endl;
-
-          for (int i = 0; i < 50-path_size; ++i) {
-            double dx_i = (i+1)*(dist_inc_list[i]/dist) * (xpts[npts-1] - xpts[1]);
+          int i;
+          for (i = 0; i < (NUM_POINTS - path_size); ++i) {
+            double dx_i = (i+1)*(dist_inc_list[i]/dist) * (xpts[2] - xpts[1]);
             double x_i = xpts[1]+dx_i;
             double y_i = s(x_i);
 
@@ -293,6 +310,7 @@ int main() {
             next_x_vals.push_back(x_i_glob);
             next_y_vals.push_back(y_i_glob);
           }
+          
           dist_inc_list.clear();
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
