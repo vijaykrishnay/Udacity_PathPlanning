@@ -7,95 +7,20 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "helpers.h"
 #include "json.hpp"
-#include "spline.h"
-#include <numeric>
+// #include "waypoints.h"
+#include "vehicle.h"
 
-#define MPS_TO_MPH 2.23
-#define SPEED_LIMIT 49.
-#define ACC_LIMIT 9.0 // 10% buffer to account for added distance during lane changes and curved roads.
-#define NUM_POINTS 50
-#define dt 0.02
-#define DIST_INC_MAX SPEED_LIMIT * dt / MPS_TO_MPH
 // for convenience
 using nlohmann::json;
 using std::string;
 using std::vector;
 
-vector<double> get_dist_inc(int lane, double speed_prev_mps, int path_size, vector<double> s_d, vector<vector<double>> sensor_fusion){
-  double lane_d = 4.*lane + 2.;
-  vector <double> dist_inc_list;
-  for (int i = 0; i < (3 * NUM_POINTS); ++i) {
-
-    double dist_inc = DIST_INC_MAX;
-    // ADJUST DIST INC FOR SMOOTH ACCEL
-    double acc_proj = (SPEED_LIMIT/MPS_TO_MPH - speed_prev_mps)/dt;
-    if (acc_proj > ACC_LIMIT){
-      // s = ut + 1/2at^2
-      dist_inc = speed_prev_mps * dt + 0.5 * ACC_LIMIT * pow(dt, 2);
-      // std::cout<<"car speed adjusted for acc"<<speed_prev_mps<<std::endl;
-    }
-
-    // ADJUST DIST INC TO AVOID COLLISIONS IN SAME LANE
-    double max_dist_in_lane = dist_inc;
-    double ego_i_s = s_d[0];
-    for (int j=0; j<sensor_fusion.size(); j++){
-      double car_j_s = sensor_fusion[j][5];
-      double car_j_d = sensor_fusion[j][6];
-      double vx_j = sensor_fusion[j][3];
-      double vy_j = sensor_fusion[j][4];
-      double car_j_v = pow(pow(vx_j, 2) + pow(vy_j, 2), 0.5);
-      if ((car_j_d > lane_d - 2.) & ((car_j_d < lane_d + 2.))){
-        if (((ego_i_s + dist_inc) > (car_j_s + car_j_v * dt * path_size - 20.)) & 
-              ((ego_i_s + dist_inc) < (car_j_s + car_j_v * dt * path_size))){
-          if ((dist_inc/dt) > car_j_v){
-            dist_inc = std::max(speed_prev_mps * dt - 0.5 * ACC_LIMIT * pow(dt, 2), car_j_v * dt);
-            // std::cout<<"car j d"<<car_j_d<<std::endl;
-            // std::cout<<"lane d"<<lane_d<<std::endl;
-            // std::cout<<"car j s"<<car_j_s<<std::endl;
-            // std::cout<<"ego s"<<ego_i_s<<std::endl;
-            // std::cout<<"car j v"<<car_j_v<<std::endl;
-          }
-        }
-      }
-    }
-
-    speed_prev_mps = dist_inc / dt;
-    ego_i_s += dist_inc;
-    dist_inc_list.push_back(dist_inc);
-    // std::cout<<"dist inc "<<dist_inc<<std::endl;
-  }
-  return dist_inc_list;
-}
-
-// Check if EGO will be within 10m of other vehicles in the same lane after path_size steps 
-bool cars_in_lane(int path_size, int lane, vector<double> s_d, vector<vector<double>> sensor_fusion){
-  double lane_d = 4.*lane + 2.;
-  for (int j=0; j<sensor_fusion.size(); j++){
-    double car_j_s = sensor_fusion[j][5];
-    double car_j_d = sensor_fusion[j][6];
-    double vx_j = sensor_fusion[j][3];
-    double vy_j = sensor_fusion[j][4];
-    double car_j_v = pow(pow(vx_j, 2) + pow(vy_j, 2), 0.5);
-    if ((car_j_d > lane_d - 2.) & ((car_j_d < lane_d + 2.))){
-      if (((s_d[0]) < (car_j_s + car_j_v * dt * path_size + 15.)) &
-            ((s_d[0]) > (car_j_s + car_j_v * dt * path_size - 10.))){
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 int main() {
   uWS::Hub h;
 
   // Load up map values for waypoint's x,y,s and d normalized normal vectors
-  vector<double> map_waypoints_x;
-  vector<double> map_waypoints_y;
-  vector<double> map_waypoints_s;
-  vector<double> map_waypoints_dx;
-  vector<double> map_waypoints_dy;
-
+  vector<double> map_waypoints_x, map_waypoints_y, map_waypoints_s, map_waypoints_dx, map_waypoints_dy;
+  
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
@@ -106,11 +31,7 @@ int main() {
   string line;
   while (getline(in_map_, line)) {
     std::istringstream iss(line);
-    double x;
-    double y;
-    float s;
-    float d_x;
-    float d_y;
+    double x, y, s, d_x, d_y;
     iss >> x;
     iss >> y;
     iss >> s;
@@ -122,9 +43,10 @@ int main() {
     map_waypoints_dx.push_back(d_x);
     map_waypoints_dy.push_back(d_y);
   }
+  Vehicle ego;
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
-               &map_waypoints_dx,&map_waypoints_dy]
+  h.onMessage([&ego, &map_waypoints_x, &map_waypoints_y, &map_waypoints_s,
+               &map_waypoints_dx, &map_waypoints_dy]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -140,180 +62,17 @@ int main() {
         string event = j[0].get<string>();
         
         if (event == "telemetry") {
-          // j[1] is the data JSON object
-          
+          // j[1] is the data JSON object          
           // Main car's localization Data
-          double car_x = j[1]["x"];
-          double car_y = j[1]["y"];
-          double car_s = j[1]["s"];
-          double car_d = j[1]["d"];
-          double car_yaw = j[1]["yaw"];
-          double car_speed = j[1]["speed"];
-
-          // Previous path data given to the Planner
-          auto previous_path_x = j[1]["previous_path_x"];
-          auto previous_path_y = j[1]["previous_path_y"];
-          // Previous path's end s and d values 
-          double end_path_s = j[1]["end_path_s"];
-          double end_path_d = j[1]["end_path_d"];
-
-          // Sensor Fusion Data, a list of all other cars on the same side 
-          //   of the road.
-          auto sensor_fusion = j[1]["sensor_fusion"];
+          ego.update_position(j[1]["x"], j[1]["y"], j[1]["s"], j[1]["d"], j[1]["yaw"], j[1]["speed"],
+                     j[1]["previous_path_x"], j[1]["previous_path_y"], j[1]["end_path_s"], j[1]["end_path_d"],
+                     j[1]["sensor_fusion"]);
+          
+          ego.plan_new_path(map_waypoints_x, map_waypoints_y, map_waypoints_s);
           json msgJson;
-
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
-
-          double pos_x;
-          double pos_y;
-          double angle;
-          int path_size = previous_path_x.size();
-
-          // // Cap path size to add at leas 5 points per update. Fewer points may result in weird lane change behavior
-          // if (path_size > (NUM_POINTS - 5)){
-          //   path_size = NUM_POINTS - 5;
-          // }
-
-          for (int i = 0; i < path_size; ++i) {
-            next_x_vals.push_back(previous_path_x[i]);
-            next_y_vals.push_back(previous_path_y[i]);
-          }
-
-          double pos_x_prev;
-          double pos_y_prev;
-          double speed_prev_mps;
-
-          if (path_size == 0) {
-            pos_x = car_x;
-            pos_y = car_y;
-            angle = deg2rad(car_yaw);
-            
-            pos_x_prev = pos_x - cos(angle);
-            pos_y_prev = pos_y - sin(angle);
-            speed_prev_mps = car_speed / MPS_TO_MPH;
-            // std::cout<<"path size=0"<<std::endl;
-          } else {
-            pos_x = previous_path_x[path_size-1];
-            pos_y = previous_path_y[path_size-1];
-
-            pos_x_prev = previous_path_x[path_size-2];
-            pos_y_prev = previous_path_y[path_size-2];
-            angle = atan2(pos_y-pos_y_prev, pos_x-pos_x_prev);
-            speed_prev_mps = distance(pos_x, pos_y, pos_x_prev, pos_y_prev) / dt;
-            std::cout<<"path size: "<<path_size<<std::endl;
-          }
-
-          // get car position and lane
-          vector<double> car_s_d = getFrenet(car_x, car_y, angle, map_waypoints_x, map_waypoints_y);
-          vector<double> s_d = getFrenet(pos_x, pos_y, angle, map_waypoints_x, map_waypoints_y);
-          double lane_d_car = car_s_d[1];
-          double lane_d_pos = s_d[1];
-          bool is_lane_changing;
-          vector<vector<double>> dist_inc_lists;
-          vector<double> dist_tot_list;
-          int lane_car, lane_pos, lane_new;
-
-          // For each lane, get distance x, y list and use lane with max dist covered.
-          for (int l=0; l<3; l++){
-            if ((lane_d_car > l*4.) & (lane_d_car <= (l+1)*4.)){
-              lane_car = l;
-            }
-
-            if ((lane_d_pos > l*4.) & (lane_d_pos <= (l+1)*4.)){
-              lane_pos = l;
-            }
-
-            vector<double> dist_inc_list = get_dist_inc(l, speed_prev_mps, path_size, s_d, sensor_fusion);
-            
-            double dist_tot = 0.;
-            for (int k=0; k<dist_inc_list.size(); k++){
-              dist_tot += dist_inc_list[k];
-            }
-            // SET DISTANCE TOTAL TO 0 IF ANOTHER CAR IS IN THE LANE IN RANGE
-            if (cars_in_lane(path_size, l, s_d, sensor_fusion)){
-              dist_tot = 0.;
-            }
-
-            dist_tot_list.push_back(dist_tot);
-            dist_inc_lists.push_back(dist_inc_list);
-            // std::cout<<"Lane: "<<l<<std::endl;
-            // std::cout<<"Distance total: "<<dist_tot<<std::endl;
-          }
-
-          // Decide what lane to use. Default to current lane
-          vector<double> dist_inc_list;
-          lane_new = lane_pos;
-          // ONLY CHECK FOR LANE CHANGE IF CAR LANE IS THE SAME AS POS LANE (CAR POS AT END OF PREVIOUS PATH)
-          // IF END OF PREVIOUS PATH IN NEW LANE. USE THE NEW LANE. WE DO  NOT WANT TO CHANGE MULTIPLE LANES WITHIN THE WINDOW SELECTED.
-          if (lane_car == lane_pos){
-            if (lane_new == 0){
-              if (dist_tot_list[1] >= 1.1 * dist_tot_list[0]){
-                lane_new = 1;
-              }
-            }else if (lane_new == 1){
-              if ((dist_tot_list[1] < 0.9 * dist_tot_list[0]) | (dist_tot_list[1] < 0.9 * dist_tot_list[2])){
-                if (dist_tot_list[2] >= dist_tot_list[0]){
-                  lane_new = 2;
-                }
-                else{
-                  lane_new = 0;
-                }
-              }
-            }else if (lane_new == 2){
-              if (dist_tot_list[1] >= 1.1 * dist_tot_list[2]){
-                lane_new = 1;
-              }
-            }
-          }
           
-          dist_inc_list = dist_inc_lists[lane_new];
-          double lane_d_new = 4. * lane_new + 2.;
-          vector<double> xpts, ypts;
-          xpts.push_back(pos_x_prev);
-          xpts.push_back(pos_x);
-          ypts.push_back(pos_y_prev);
-          ypts.push_back(pos_y);
-          
-          vector<double> d_list {30., 60., 90.};  
-          // vector<double> xy_5 = getXY(s_d[0]+5, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-          for (double d : d_list){
-            vector<double> xy_d = getXY(s_d[0]+d, lane_d_new, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-            xpts.push_back(xy_d[0]);
-            ypts.push_back(xy_d[1]);
-          }
-          
-          int npts = xpts.size();
-          // Convert to local coordinate system. This prevents multiple y values for the same x?(for short distances)
-          for(int i=0; i<npts; i++){
-            double shift_x = xpts[i] - pos_x;
-            double shift_y = ypts[i] - pos_y;
-            xpts[i] = (shift_x*cos(0. - angle) - shift_y*sin(0. - angle));
-            ypts[i] = (shift_x*sin(0. - angle) + shift_y*cos(0. - angle));
-            // std::cout<<"x "<<xpts[i]<<std::endl;
-            // std::cout<<"y "<<ypts[i]<<std::endl;
-          }
-
-          tk::spline s;
-          s.set_points(xpts, ypts);
-          double dist = distance(xpts[1], ypts[1], xpts[2], ypts[2]); // this should be equal to first distance in d_list
-          
-          // std::cout<<"car speed="<<speed_prev_mps<<std::endl;
-          int i;
-          for (i = 0; i < (NUM_POINTS - path_size); ++i) {
-            double dx_i = (i+1)*(dist_inc_list[i]/dist) * (xpts[2] - xpts[1]);
-            double x_i = xpts[1]+dx_i;
-            double y_i = s(x_i);
-
-            double x_i_glob = pos_x + x_i*cos(angle) - y_i*sin(angle);
-            double y_i_glob = pos_y + x_i*sin(angle) + y_i*cos(angle);
-            next_x_vals.push_back(x_i_glob);
-            next_y_vals.push_back(y_i_glob);
-          }
-          
-          dist_inc_list.clear();
-          msgJson["next_x"] = next_x_vals;
-          msgJson["next_y"] = next_y_vals;
+          msgJson["next_x"] = ego.get_next_path_x();
+          msgJson["next_y"] = ego.get_next_path_y();
 
           auto msg = "42[\"control\","+ msgJson.dump()+"]";
 
