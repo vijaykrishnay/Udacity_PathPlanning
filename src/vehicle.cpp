@@ -146,11 +146,16 @@ void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, ve
     ypts.push_back(end_y_prev);
     ypts.push_back(end_y);
 
-    vec_dbl s_list {30., 60., 90.};
+    vec_dbl s_list {20., 40., 60., 80.};
 
     // vec_dbl xy_5 = getXY(s_d[0]+5, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
     for (double s : s_list){
-      vec_dbl xy_d = getXY(end_path_s+s, calc_lane_d(lane_new), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      double tmp_d = calc_lane_d(lane_new);
+      if (s < 33.){
+        // this helps smoother lane changes?
+        tmp_d = ((33. - s) * end_path_d + s * tmp_d)/33.;
+      }
+      vec_dbl xy_d = getXY(end_path_s+s, tmp_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
       xpts.push_back(xy_d[0]);
       ypts.push_back(xy_d[1]);
     }
