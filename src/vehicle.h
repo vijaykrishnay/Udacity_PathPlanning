@@ -13,14 +13,14 @@ using nlohmann::json;
 
 const double MPS_TO_MPH = 2.23;
 const double  SPEED_LIMIT = 49.;
-const double ACC_LIMIT = 9.0; // 10% buffer to account for added distance during lane changes and curved roads.
-const int NUM_POINTS = 50;
+const double ACC_LIMIT = 9.0; // 10% buffer to account for added distance during curved roads.
+const int NUM_POINTS = 40;
 const double dt = 0.02;
 const double DIST_INC_MAX = SPEED_LIMIT * dt / MPS_TO_MPH;
 const int NUM_LANES = 3;
 const double LANE_WIDTH = 4.;
 const double SLOWDOWN_DIST = 20.;
-const double MIN_LANECHANGE_DIST_FRONT = 18.;
+const double MIN_LANECHANGE_DIST_FRONT = 15.;
 const double MIN_LANECHANGE_DIST_REAR = 12.;
 
 static int infer_lane(double d_val){
@@ -99,8 +99,8 @@ class Vehicle {
     //             double end_d, vec2d_dbl sensor_fusion);
     void update_position(const json& data);
     
-    void plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s);
-    vec_dbl calc_dist_inc(int lane);
+    void plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s, int &lane_new);
+    vec_dbl calc_dist_inc(int lane, bool is_lane_change);
     bool cars_in_lane(int lane);
     vec_dbl get_next_path_x();
     vec_dbl get_next_path_y();

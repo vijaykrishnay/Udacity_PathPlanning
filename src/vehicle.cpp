@@ -78,7 +78,7 @@ void Vehicle::update_position(const json& data){
     // std::cout<<"curr lane = "<<curr_lane<<std::endl;
 }
 
-void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s){
+void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s, int &lane_new){
     next_path_x.clear();
     next_path_y.clear();
 
@@ -89,18 +89,17 @@ void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, ve
 
     vec2d_dbl dist_inc_lists;
     vec_dbl dist_tot_list;
-    int lane_new;
 
     // For each lane, get distance x, y list and use lane with max dist covered.
     for (int lane=0; lane<3; lane++){
-      vec_dbl dist_inc_list = calc_dist_inc(lane);
+      vec_dbl dist_inc_list = calc_dist_inc(lane, lane!=end_lane);
       
       double dist_tot = 0.;
       for (int k=0; k<dist_inc_list.size(); k++){
         dist_tot += dist_inc_list[k];
       }
-      // SET DISTANCE TOTAL TO 0 IF ANOTHER CAR IS IN THE LANE IN RANGE
-      if (cars_in_lane(lane)){
+      // SET DISTANCE TOTAL TO 0 IF ANOTHER CAR IS IN THE LANE IN RANGE (IGNORE IF EXISTING LANE)
+      if (cars_in_lane(lane) & (lane!=end_lane)){
         dist_tot = 0.;
       }
 
@@ -112,10 +111,14 @@ void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, ve
 
     // Decide what lane to use. Default to current lane
     vec_dbl dist_inc_list;
-    lane_new = end_lane;
-    // ONLY CHECK FOR LANE CHANGE IF CAR LANE IS THE SAME AS POS LANE (CAR POS AT END OF PREVIOUS PATH)
+
+    if (lane_new < 0){
+      lane_new = end_lane;
+    }
+    // ONLY CHECK FOR LANE CHANGE IF CAR LANE IS THE SAME AS NEW LANE (from previous iteration)
     // IF END OF PREVIOUS PATH IN NEW LANE. USE THE NEW LANE. WE DO  NOT WANT TO CHANGE MULTIPLE LANES WITHIN THE WINDOW SELECTED.
-    if (curr_lane == end_lane){
+    // std::cout<<"lane_new: "<<lane_new<<std::endl;
+    if (curr_lane == lane_new){
       if (lane_new == 0){
         if (dist_tot_list[1] >= 1.1 * dist_tot_list[0]){
           lane_new = 1;
@@ -181,19 +184,29 @@ void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, ve
     }
 }
 
-vec_dbl Vehicle::calc_dist_inc(int lane){
+vec_dbl Vehicle::calc_dist_inc(int lane, bool is_change_lane){
   vector <double> dist_inc_list;
   double ego_i_s = end_path_s;
   double end_speed_prev_mps_tmp = end_speed_prev_mps;
   for (int i = 0; i < (3 * NUM_POINTS); ++i) {
-
     double dist_inc = DIST_INC_MAX;
+    // if (is_change_lane){
+    //   dist_inc *= 0.95;
+    // }
     // ADJUST DIST INC FOR SMOOTH ACCEL
-    double acc_proj = (SPEED_LIMIT/MPS_TO_MPH - end_speed_prev_mps)/dt;
+    double acc_proj = (dist_inc/dt - end_speed_prev_mps)/dt;
     if (acc_proj > ACC_LIMIT){
       // s = ut + 1/2at^2
       dist_inc = end_speed_prev_mps_tmp * dt + 0.5 * ACC_LIMIT * pow(dt, 2);
       // std::cout<<"car speed adjusted for acc"<<end_speed_prev_mps<<std::endl;
+    }
+
+    // check for braking
+    if (acc_proj < -ACC_LIMIT){
+      // s = ut + 1/2at^2
+      std::cout<<"car speed adjusted for braking: "<<dist_inc<<std::endl;
+      // dist_inc = end_speed_prev_mps_tmp * dt - 0.5 * ACC_LIMIT * pow(dt, 2);
+      std::cout<<"car speed adjusted for braking: "<<dist_inc<<std::endl;
     }
 
     // ADJUST DIST INC TO AVOID COLLISIONS IN SAME LANE
@@ -227,10 +240,13 @@ bool Vehicle::cars_in_lane(int lane){
     double car_j_s = sensor_data[j].get_s();
     double car_j_d = sensor_data[j].get_d();
     double car_j_v = sensor_data[j].get_v();
-    
+    double end_car_j_s = car_j_s + car_j_v * dt * path_size;
     if (infer_lane(car_j_d) == lane){
-      if (((end_path_s) < (car_j_s + car_j_v * dt * path_size + MIN_LANECHANGE_DIST_REAR)) &
-            ((end_path_s) > (car_j_s + car_j_v * dt * path_size - MIN_LANECHANGE_DIST_FRONT))){
+      if ((end_path_s < (end_car_j_s + MIN_LANECHANGE_DIST_REAR)) & (end_path_s > (end_car_j_s - MIN_LANECHANGE_DIST_FRONT))){
+        return true;
+      }
+
+      if ((curr_s < (car_j_s + MIN_LANECHANGE_DIST_REAR)) & (curr_s > (car_j_s - MIN_LANECHANGE_DIST_FRONT))){
         return true;
       }
     }
