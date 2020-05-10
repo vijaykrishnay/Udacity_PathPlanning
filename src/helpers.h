@@ -4,6 +4,10 @@
 #include <math.h>
 #include <string>
 #include <vector>
+#include <iostream>
+#include "Eigen-3.3/Eigen/Dense"
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
 
 // for convenience
 using std::string;
@@ -152,6 +156,71 @@ static vector<double> getXY(double s, double d, const vector<double> &maps_s,
   double y = seg_y + d*sin(perp_heading);
 
   return {x,y};
+}
+
+static vector<double> JMT(vector<double> start, vector<double> end, double T) {
+  /**
+   * Calculate the Jerk Minimizing Trajectory that connects the initial state
+   * to the final state in time T.
+   *
+   * @param start - the vehicles start location given as a length three array
+   *   corresponding to initial values of [s, s_dot, s_double_dot]
+   * @param end - the desired end state for vehicle. Like "start" this is a
+   *   length three array.
+   * @param T - The duration, in steps, over which this maneuver should occur.
+   *
+   * @output an array of length 6, each value corresponding to a coefficent in 
+   *   the polynomial:
+   *   s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
+   *
+   * EXAMPLE
+   *   > JMT([0, 10, 0], [10, 10, 0], 1)
+   *     [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
+   */
+  MatrixXd m(3, 3);
+  VectorXd coeff(3);
+  VectorXd y(3);
+  m(0, 0) = pow(T, 3);
+  m(1, 0) = 3. * pow(T, 2);
+  m(2, 0) = 6. * T;
+  m(0, 1) = pow(T, 4);
+  m(1, 1) = 4. * pow(T, 3);
+  m(2, 1) = 12. * pow(T, 2);
+  m(0, 2) = pow(T, 5);
+  m(1, 2) = 5. * pow(T, 4);
+  m(2, 2) = 20. * pow(T, 3);
+  // std::cout<<"JMT M: "<<m(0,0)<<", "<<m(1,0)<<", "<<m(2,0)<<std::endl;
+  y(0) = end[0] - (start[0] + start[1]*T + 0.5*start[2]*pow(T, 2));
+  y(1) = end[1] - (start[1] + start[2]*T);
+  y(2) = end[2] - start[2];
+  // std::cout<<"JMT end0: "<<end[0]<<std::endl;
+  // std::cout<<"JMT y2: "<<y(2)<<std::endl;
+  coeff = m.inverse() * y;
+  return {start[0], start[1], 0.5*start[2], coeff[0], coeff[1], coeff[2]};
+}
+
+static double evaluate_JMT_poly(vector<double> coeff, double t){
+  double val = 0;
+  for(int i=0; i<6; ++i){
+    val += coeff[i] * pow(t, i);
+  }
+  return val;
+}
+
+static vector<double> global_to_local(double ref_x, double ref_y, double ref_angle, double x_val, double y_val){
+  vector<double> local_xy;
+  double shift_x = x_val - ref_x;
+  double shift_y = y_val - ref_y;
+  local_xy.push_back(shift_x * cos(0. - ref_angle) - shift_y * sin(0. - ref_angle));
+  local_xy.push_back(shift_x * sin(0. - ref_angle) + shift_y * cos(0. - ref_angle));
+  return local_xy;
+}
+
+static vector<double> local_to_global(double ref_x, double ref_y, double ref_angle, double x_val, double y_val){
+  vector<double> global_xy;
+  global_xy.push_back(ref_x + x_val * cos(ref_angle) - y_val * sin(ref_angle));
+  global_xy.push_back(ref_y + x_val * sin(ref_angle) + y_val * cos(ref_angle));
+  return global_xy;
 }
 
 #endif  // HELPERS_H
