@@ -15,6 +15,13 @@ using nlohmann::json;
  * Constructor.
  */
 Vehicle::Vehicle() {}
+
+Vehicle::Vehicle(vec_dbl map_waypoints_x_, vec_dbl map_waypoints_y_, vec_dbl map_waypoints_s_){
+  map_waypoints_x = map_waypoints_x_;
+  map_waypoints_y = map_waypoints_y_;
+  map_waypoints_s = map_waypoints_s_;
+}
+
 SensorFusion::SensorFusion(vec_dbl data_){
     data = data_;
 };
@@ -24,6 +31,30 @@ SensorFusion::SensorFusion(vec_dbl data_){
  * Destructor.
  */
 Vehicle::~Vehicle() {}
+
+void Vehicle::calc_end_positions(){
+  if (path_size < 3) {
+    end_x = curr_x;
+    end_y = curr_y;
+    end_angle = deg2rad(curr_yaw);
+    end_path_s = curr_s;
+    end_path_d = curr_d;
+    
+    end_x_prev = end_x - cos(end_angle) * dt;
+    end_y_prev = end_y - sin(end_angle) * dt;
+    end_speed_prev_mps = curr_speed / MPS_TO_MPH;
+    // std::cout<<"path size=0"<<std::endl;
+  } else {
+    end_x = previous_path_x[path_size-1];
+    end_y = previous_path_y[path_size-1];
+
+    end_x_prev = previous_path_x[path_size-2];
+    end_y_prev = previous_path_y[path_size-2];
+    end_angle = atan2(end_y - end_y_prev, end_x - end_x_prev);
+    end_speed_prev_mps = distance(end_x, end_y, end_x_prev, end_y_prev) / dt;
+    // std::cout<<"path size: "<<path_size<<std::endl;
+  }
+}
 
 void Vehicle::update_position(const json& data){
     curr_x = data["x"];
@@ -43,34 +74,9 @@ void Vehicle::update_position(const json& data){
     }
 
     path_size = previous_path_x.size();
-    // std::cout<<"path size "<<path_size<<std::endl;
-    // // Cap path size to add at leas 5 points per update. Fewer points may result in weird lane change behavior
-    // if (path_size > (NUM_POINTS - 5)){
-    //   path_size = NUM_POINTS - 5;
-    // }
-
+    
     // CALCULATE END, END PREV POSITIONS
-    if (path_size == 0) {
-      end_x = curr_x;
-      end_y = curr_y;
-      end_angle = deg2rad(curr_yaw);
-      end_path_s = curr_s;
-      end_path_d = curr_d;
-      
-      end_x_prev = end_x - cos(end_angle);
-      end_y_prev = end_y - sin(end_angle);
-      end_speed_prev_mps = curr_speed / MPS_TO_MPH;
-      // std::cout<<"path size=0"<<std::endl;
-    } else {
-      end_x = previous_path_x[path_size-1];
-      end_y = previous_path_y[path_size-1];
-
-      end_x_prev = previous_path_x[path_size-2];
-      end_y_prev = previous_path_y[path_size-2];
-      end_angle = atan2(end_y-end_y_prev, end_x-end_x_prev);
-      end_speed_prev_mps = distance(end_x, end_y, end_x_prev, end_y_prev) / dt;
-      // std::cout<<"path size: "<<path_size<<std::endl;
-    }
+    calc_end_positions();
 
     // CALCULATE LANES
     curr_lane = infer_lane(curr_d);
@@ -78,7 +84,7 @@ void Vehicle::update_position(const json& data){
     // std::cout<<"curr lane = "<<curr_lane<<std::endl;
 }
 
-void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s, int &lane_new){
+void Vehicle::plan_new_path(int &lane_new){
     next_path_x.clear();
     next_path_y.clear();
 
@@ -163,10 +169,9 @@ void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, ve
     int npts = xpts.size();
     // Convert to local coordinate system. This prevents multiple y values for the same x?(for short distances)
     for(int i=0; i<npts; i++){
-      double shift_x = xpts[i] - end_x;
-      double shift_y = ypts[i] - end_y;
-      xpts[i] = (shift_x*cos(0. - end_angle) - shift_y*sin(0. - end_angle));
-      ypts[i] = (shift_x*sin(0. - end_angle) + shift_y*cos(0. - end_angle));
+      vec_dbl xy_i_local = global_to_local(end_x, end_y, end_angle, xpts[i], ypts[i]);
+      xpts[i] = xy_i_local[0];
+      ypts[i] = xy_i_local[1];
     }
 
     tk::spline s;
@@ -178,14 +183,11 @@ void Vehicle::plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, ve
     for (i = 0; i < (NUM_POINTS - path_size); ++i) {
       double dx_i = (i+1)*(dist_inc_list[i]/dist) * (xpts[2] - xpts[1]);
       double x_i = xpts[1]+dx_i;
-      double y_i = s(x_i);
-
-      double x_i_glob = end_x + x_i*cos(end_angle) - y_i*sin(end_angle);
-      double y_i_glob = end_y + x_i*sin(end_angle) + y_i*cos(end_angle);
-      next_path_x.push_back(x_i_glob);
-      next_path_y.push_back(y_i_glob);
-      // std::cout<<"next x "<<x_i_glob<<std::endl;
-      // std::cout<<"next y "<<y_i_glob<<std::endl;
+      vec_dbl xy_global = local_to_global(end_x, end_y, end_angle, x_i, s(x_i));
+      next_path_x.push_back(xy_global[0]);
+      next_path_y.push_back(xy_global[1]);
+      // std::cout<<"next x "<<xy_global[0]<<std::endl;
+      // std::cout<<"next y "<<xy_global[1]<<std::endl;
     }
 }
 

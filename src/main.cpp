@@ -43,11 +43,11 @@ int main() {
     map_waypoints_dx.push_back(d_x);
     map_waypoints_dy.push_back(d_y);
   }
-  Vehicle ego;
+  
+  Vehicle ego(map_waypoints_x, map_waypoints_y, map_waypoints_s);
   int lane_new = -1;
 
-  h.onMessage([&ego, &map_waypoints_x, &map_waypoints_y, &map_waypoints_s,
-               &map_waypoints_dx, &map_waypoints_dy, &lane_new]
+  h.onMessage([&ego, &lane_new]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -66,8 +66,7 @@ int main() {
           // j[1] is the data JSON object          
           // Main car's localization Data
           ego.update_position(j[1]);
-          
-          ego.plan_new_path(map_waypoints_x, map_waypoints_y, map_waypoints_s, lane_new);
+          ego.plan_new_path(lane_new);
           json msgJson;
           
           msgJson["next_x"] = ego.get_next_path_x();

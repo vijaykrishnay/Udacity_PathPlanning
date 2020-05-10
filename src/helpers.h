@@ -154,4 +154,20 @@ static vector<double> getXY(double s, double d, const vector<double> &maps_s,
   return {x,y};
 }
 
+static vector<double> global_to_local(double ref_x, double ref_y, double ref_angle, double x_val, double y_val){
+  vector<double> local_xy;
+  double shift_x = x_val - ref_x;
+  double shift_y = y_val - ref_y;
+  local_xy.push_back(shift_x * cos(0. - ref_angle) - shift_y * sin(0. - ref_angle));
+  local_xy.push_back(shift_x * sin(0. - ref_angle) + shift_y * cos(0. - ref_angle));
+  return local_xy;
+}
+
+static vector<double> local_to_global(double ref_x, double ref_y, double ref_angle, double x_val, double y_val){
+  vector<double> global_xy;
+  global_xy.push_back(ref_x + x_val * cos(ref_angle) - y_val * sin(ref_angle));
+  global_xy.push_back(ref_y + x_val * sin(ref_angle) + y_val * cos(ref_angle));
+  return global_xy;
+}
+
 #endif  // HELPERS_H

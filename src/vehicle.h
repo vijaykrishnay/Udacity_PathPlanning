@@ -86,20 +86,18 @@ class Vehicle {
     vec_dbl previous_path_x, previous_path_y;
     vec_dbl next_path_x, next_path_y;
     vector<SensorFusion> sensor_data;
+    vec_dbl map_waypoints_x, map_waypoints_y, map_waypoints_s;
 
   public:
     // Constructors
     Vehicle();
-    // Vehicle(Waypoints);
+    Vehicle(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s);
     
     // Destructor
     virtual ~Vehicle();
-    // void update_position(double x_, double y_, double s_, double d_, double yaw_, double speed_, 
-    //             vec_dbl prev_path_x, vec_dbl prev_path_y, double end_s, 
-    //             double end_d, vec2d_dbl sensor_fusion);
+    void calc_end_positions();
     void update_position(const json& data);
-    
-    void plan_new_path(vec_dbl map_waypoints_x, vec_dbl map_waypoints_y, vec_dbl map_waypoints_s, int &lane_new);
+    void plan_new_path(int &lane_new);
     vec_dbl calc_dist_inc(int lane, bool is_lane_change);
     bool cars_in_lane(int lane);
     vec_dbl get_next_path_x();
