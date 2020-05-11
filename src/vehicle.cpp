@@ -197,9 +197,9 @@ vec_dbl Vehicle::calc_dist_inc(int lane, bool is_change_lane){
   double end_speed_prev_mps_tmp = end_speed_prev_mps;
   for (int i = 0; i < (3 * NUM_POINTS); ++i) {
     double dist_inc = DIST_INC_MAX;
-    // if (is_change_lane){
-    //   dist_inc *= 0.95;
-    // }
+    if ((is_change_lane) & (i < NUM_POINTS)){
+      dist_inc *= 0.995;
+    }
     // ADJUST DIST INC FOR SMOOTH ACCEL
     double acc_proj = (dist_inc/dt - end_speed_prev_mps)/dt;
     if (acc_proj > ACC_LIMIT){
