@@ -40,6 +40,13 @@ This project implements path planning to safely navigate around a virtual highwa
 6. Spline is interpolated based on distance increments for the selected lane and XY coords are converted back to global.
   - Spline interpolation points were tuned to result in lateral acc below thd for lane changes.
 
+## Results
+![PathPlanningDriving.png](PathPlanningDriving.png "Run Result")
+
+## Improvements
+- Current planning only evaluates adjacent lane(s). i.e, does not move to adjacent slower lane for long term benefit. e.g., If car is in lane 1 and lan 3 is empty and lane 2 is similar or slightky slower, the car could move to lane 2 in anticipation of moving to lane 3 for better long term distance objective.
+- Other vehicles acceleration is not considered. This could lead to collisions in extreme situations. This effect can be reduced by path planning for fewer data points.
+
 # Particle Filter Code
 The directory structure of this repository is as follows:
 

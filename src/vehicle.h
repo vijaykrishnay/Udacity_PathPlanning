@@ -22,6 +22,7 @@ const double LANE_WIDTH = 4.;
 const double SLOWDOWN_DIST = 20.;
 const double MIN_LANECHANGE_DIST_FRONT = 15.;
 const double MIN_LANECHANGE_DIST_REAR = 12.;
+const double LANE_CHANGE_T = 3.;
 
 static int infer_lane(double d_val){
   for (int lane=0; lane<NUM_LANES; lane++){

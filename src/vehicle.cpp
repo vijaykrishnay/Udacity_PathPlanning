@@ -104,10 +104,12 @@ void Vehicle::plan_new_path(int &lane_new){
       for (int k=0; k<dist_inc_list.size(); k++){
         dist_tot += dist_inc_list[k];
       }
-      // SET DISTANCE TOTAL TO 0 IF ANOTHER CAR IS IN THE LANE IN RANGE (IGNORE IF EXISTING LANE)
-      if (cars_in_lane(lane) & (lane!=end_lane)){
-        dist_tot = 0.;
-      }
+      // SET DISTANCE TOTAL TO 0 IF ANOTHER CAR IS IN THE LANE IN RANGE
+      if (lane!=end_lane){
+        if (cars_in_lane(lane)){
+          dist_tot = 0.;
+        }        
+      }      
 
       dist_tot_list.push_back(dist_tot);
       dist_inc_lists.push_back(dist_inc_list);
@@ -152,16 +154,15 @@ void Vehicle::plan_new_path(int &lane_new){
     ypts.push_back(end_y_prev);
     ypts.push_back(end_y);
 
-    vec_dbl s_list {20., 40., 60., 80.};
-
     // vec_dbl xy_5 = getXY(s_d[0]+5, lane_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-    for (double s : s_list){
-      double tmp_d = calc_lane_d(lane_new);
-      if (s < 33.){
+    double new_d = calc_lane_d(lane_new);
+    double lane_change_dist = end_speed_prev_mps * LANE_CHANGE_T * std::abs(new_d - end_path_d) / LANE_WIDTH;
+    for (double s=20.; s < 100.; s+= 15){
+      if (s < lane_change_dist){
         // this helps smoother lane changes?
-        tmp_d = ((33. - s) * end_path_d + s * tmp_d)/33.;
+        new_d = ((lane_change_dist - s) * end_path_d + s * new_d)/lane_change_dist;
       }
-      vec_dbl xy_d = getXY(end_path_s+s, tmp_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      vec_dbl xy_d = getXY(end_path_s+s, new_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
       xpts.push_back(xy_d[0]);
       ypts.push_back(xy_d[1]);
     }
